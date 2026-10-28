@@ -6,10 +6,11 @@ you already know a word, click **Got it** and the card moves to a `known` folder
 
 ![wordnote showing a card](docs/screenshot.png)
 
-The cards are the 771 everyday-noun cards from
-[wordcards](https://github.com/MichaelMuClaude/wordcards): download `wordcards-v1-cards.zip` from its
-Releases page, unzip the pictures into `~/word-images/learning`, and start wordnote. Any folder of
-pictures works, though; the app does not care what is on them.
+The cards are the 1271 everyday-word cards from
+[wordcards](https://github.com/MichaelMuClaude/wordcards): download `wordcards-v1-cards.zip` (771 nouns)
+and `wordcards-v1.1-set2-cards.zip` (500 more: people, actions, adjectives ...) from its Releases page,
+unzip the pictures into `~/word-images/learning`, and start wordnote. Any folder of pictures works,
+though; the app does not care what is on them.
 
 It started as a copy of [frame](https://github.com/MichaelMuClaude/frame), the desktop photo frame, and
 shares its code: [egui](https://github.com/emilk/egui), a resizable borderless window, controls that
