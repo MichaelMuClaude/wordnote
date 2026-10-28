@@ -1,0 +1,16 @@
+[package]
+name = "wordnote"
+version = "0.1.0"
+edition = "2024"
+description = "A desktop sticky note that shows random word cards and lets you move the ones you already know to another folder"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+egui = "0.36"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
+libheif-rs = { version = "3.0.0", default-features = false, features = ["v1_17"] }
+rand = "0.9"
+rfd = "0.17.2"
+walkdir = "2.5.0"
