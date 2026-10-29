@@ -6,10 +6,11 @@ you already know a word, click **Got it** and the card moves to a `known` folder
 
 ![wordnote showing a card](docs/screenshot.png)
 
-The cards are the 1771 everyday-word cards from
+The cards are the 2271 everyday-word cards from
 [wordcards](https://github.com/MichaelMuClaude/wordcards): download `wordcards-v1-cards.zip` (771 nouns),
 `wordcards-v1.1-set2-cards.zip` (500 more: people, actions, adjectives ...) and
-`wordcards-v1.2-set3-cards.zip` (500 more: animals, nature, food, tools, feelings ...) from its Releases page,
+`wordcards-v1.2-set3-cards.zip` (500 more: animals, nature, food, tools, feelings ...) and
+`wordcards-v1.3-set4-cards.zip` (500 more: world foods, tech, vehicles, characters ...) from its Releases page,
 unzip the pictures into `~/word-images/learning`, and start wordnote. Any folder of pictures works,
 though; the app does not care what is on them.
 
