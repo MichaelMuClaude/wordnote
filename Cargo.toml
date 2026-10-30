@@ -6,11 +6,24 @@ description = "A small desktop window that shows random word picture cards, so y
 license = "MIT"
 readme = "README.md"
 
+[features]
+# HEIC/HEIF photos need the libheif C library; build with --no-default-features where it is not available
+# (for example when cross-compiling for Windows).
+default = ["heif"]
+heif = ["dep:libheif-rs"]
+
 [dependencies]
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
 egui = "0.36"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
-libheif-rs = { version = "3.0.0", default-features = false, features = ["v1_17"] }
+libheif-rs = { version = "3.0.0", default-features = false, features = ["v1_17"], optional = true }
 rand = "0.9"
 rfd = "0.17.2"
 walkdir = "2.5.0"
+
+# Linux and macOS draw with OpenGL. Windows uses wgpu (Direct3D 12 or Vulkan) because plain OpenGL is missing or too old
+# in virtual machines and on some graphics drivers.
+[target.'cfg(not(windows))'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu"] }

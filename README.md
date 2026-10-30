@@ -45,6 +45,21 @@ glancecards [--interval SECONDS] [--top | --normal | --bottom] [FOLDER...]
 
 Got it moves your real files. It is a move, not a delete, and Undo works, but try it on a copy first.
 
+## Windows
+
+A Windows build is made by cross-compiling on Linux (or build natively on Windows):
+
+```
+rustup target add x86_64-pc-windows-gnu          # and install mingw-w64, for example: sudo apt install gcc-mingw-w64-x86-64
+cargo build --release --no-default-features --target x86_64-pc-windows-gnu
+```
+
+`--no-default-features` leaves out HEIC/HEIF photo support (it needs the libheif C library). On Windows the
+window is drawn with wgpu (Direct3D 12 or Vulkan) instead of OpenGL, so it also runs in virtual machines whose
+graphics card only has OpenGL 1.1. The exe is not code-signed, so Windows SmartScreen or an App Control /
+attack-surface-reduction policy may block it until it is allowed. Tested on Windows 11: the card, the Chinese
+interface, the right-click menu, the settings window, all three window positions and Got it.
+
 ## Building
 
 You need a recent Rust toolchain and the libheif development files (1.17 or newer).

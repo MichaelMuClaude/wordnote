@@ -1,6 +1,9 @@
 //! A small, resizable desktop card window for learning words: shows random word cards (pictures)
 //! from a folder and lets you move the ones you already know to another folder with one click.
 
+// A release build on Windows is a window app: no console window next to it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod loader;
 mod settings;
 

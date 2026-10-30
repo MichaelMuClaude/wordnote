@@ -11,7 +11,10 @@ use image::ImageDecoder;
 /// Longest side photos are shrunk to before they become textures.
 const MAX_SIDE: u32 = 2048;
 const WORKERS: usize = 2;
-const EXTS: [&str; 10] = ["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif"];
+#[cfg(feature = "heif")]
+const EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif"];
+#[cfg(not(feature = "heif"))]
+const EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff"];
 
 pub enum Loaded {
     Ok(PathBuf, ColorImage),
@@ -79,6 +82,7 @@ fn scan(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+#[cfg(feature = "heif")]
 fn is_heif(path: &Path) -> bool {
     path.extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -86,7 +90,10 @@ fn is_heif(path: &Path) -> bool {
 }
 
 fn decode(path: &Path) -> Result<ColorImage, String> {
+    #[cfg(feature = "heif")]
     let img = if is_heif(path) { decode_heif(path)? } else { decode_std(path)? };
+    #[cfg(not(feature = "heif"))]
+    let img = decode_std(path)?;
     let img = if img.width().max(img.height()) > MAX_SIDE {
         img.thumbnail(MAX_SIDE, MAX_SIDE)
     } else {
@@ -109,6 +116,7 @@ fn decode_std(path: &Path) -> Result<image::DynamicImage, String> {
     Ok(img)
 }
 
+#[cfg(feature = "heif")]
 fn decode_heif(path: &Path) -> Result<image::DynamicImage, String> {
     use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
 
