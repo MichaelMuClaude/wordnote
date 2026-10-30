@@ -6,7 +6,9 @@ mod settings;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
@@ -16,13 +18,65 @@ use eframe::egui::{
 use rand::seq::SliceRandom;
 
 use loader::Loaded;
-use settings::{Settings, home_dir};
+use settings::{Level, Settings, home_dir};
 
 /// Background behind the card: the same cream as the strip under each picture, so a card that does not
 /// fill the window (no "fit to card") blends in instead of showing bars.
 const CARD_BG: Color32 = Color32::from_rgb(250, 247, 240);
 const EDGE: f32 = 7.0;
 const TOAST_SECS: u64 = 8;
+
+/// Whether the interface is in Chinese. It is, unless no Chinese font can be found on the system.
+static ZH: AtomicBool = AtomicBool::new(false);
+
+/// Picks the Chinese or the English text for the interface.
+fn tr(zh: &'static str, en: &'static str) -> &'static str {
+    if ZH.load(Ordering::Relaxed) { zh } else { en }
+}
+
+/// Loads a system font with Chinese characters as a fallback for the built-in fonts. Returns false when none is
+/// found (the interface then falls back to English instead of showing empty boxes).
+fn install_cjk_font(ctx: &egui::Context) -> bool {
+    // (path, face index inside a .ttc collection; for Noto Sans CJK 2 is Simplified Chinese)
+    const CANDIDATES: &[(&str, u32)] = &[
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2),
+        ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 2),
+        ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 2),
+        ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", 2),
+        ("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf", 0),
+        ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),
+        ("/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc", 0),
+        ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),
+        ("C:\\Windows\\Fonts\\msyh.ttc", 0),
+        ("C:\\Windows\\Fonts\\simhei.ttf", 0),
+        ("/System/Library/Fonts/PingFang.ttc", 0),
+        ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
+        ("/Library/Fonts/Arial Unicode.ttf", 0),
+    ];
+    for (path, index) in CANDIDATES {
+        let Ok(bytes) = std::fs::read(path) else { continue };
+        let mut data = egui::FontData::from_owned(bytes);
+        data.index = *index;
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert("cjk".to_owned(), Arc::new(data));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(list) = fonts.families.get_mut(&family) {
+                list.push("cjk".to_owned());
+            }
+        }
+        ctx.set_fonts(fonts);
+        return true;
+    }
+    false
+}
+
+fn window_level(level: Level) -> egui::WindowLevel {
+    match level {
+        Level::Bottom => egui::WindowLevel::AlwaysOnBottom,
+        Level::Normal => egui::WindowLevel::Normal,
+        Level::Top => egui::WindowLevel::AlwaysOnTop,
+    }
+}
 
 /// What the Undo button in the toast can reverse.
 enum Undo {
@@ -37,8 +91,8 @@ enum Pick {
 struct Config {
     dirs: Vec<PathBuf>,
     interval: Duration,
-    /// Keep the window at normal stacking level instead of sinking it below other windows.
-    normal_level: bool,
+    /// Where the window sits relative to other windows (the command line overrides the saved setting).
+    level: Level,
     settings: Settings,
 }
 
@@ -64,7 +118,7 @@ struct App {
     hover_photo: bool,
     pick: Option<(Pick, Receiver<Option<PathBuf>>)>,
     frames: u32,
-    sink: bool,
+    level: Level,
     /// Resize the frame to match each photo's orientation.
     fit: bool,
     /// Aspect ratio of a newly shown photo that the window has not been fitted to yet.
@@ -75,6 +129,7 @@ struct App {
 
 impl App {
     fn new(ctx: &egui::Context, cfg: Config) -> Self {
+        ZH.store(install_cjk_font(ctx), Ordering::Relaxed);
         let scan_rx = loader::spawn_scan(ctx.clone(), cfg.dirs.clone());
         let (job_tx, res_rx) = loader::spawn_workers(ctx.clone());
         Self {
@@ -97,7 +152,7 @@ impl App {
             settings_open: false,
             pick: None,
             frames: 0,
-            sink: !cfg.normal_level,
+            level: cfg.level,
             fit: cfg.settings.fit,
             fit_aspect: None,
             history: Vec::new(),
@@ -274,7 +329,7 @@ impl App {
         let Some((path, _)) = self.shown.clone() else { return };
         let dir = self.known_dir();
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.toast = Some((format!("Cannot create {}: {e}", dir.display()), Instant::now(), false));
+            self.toast = Some((format!("{} {}: {e}", tr("无法创建", "Cannot create"), dir.display()), Instant::now(), false));
             return;
         }
         self.move_current_to(path, dir);
@@ -291,9 +346,9 @@ impl App {
                 match move_file(&to, &dest) {
                     Ok(()) => {
                         self.reinsert(dest);
-                        "Moved back".to_string()
+                        tr("已放回去", "Moved back").to_string()
                     }
-                    Err(e) => format!("Undo failed: {e}"),
+                    Err(e) => format!("{}: {e}", tr("撤销失败", "Undo failed")),
                 }
             }
             None => return,
@@ -312,7 +367,7 @@ impl App {
         let Some(name) = photo.file_name() else { return };
         let mut dest = dir.join(name);
         if dest == photo {
-            self.toast = Some(("Already in that folder".into(), Instant::now(), false));
+            self.toast = Some((tr("已经在这个文件夹里", "Already in that folder").into(), Instant::now(), false));
             return;
         }
         if dest.exists() {
@@ -330,13 +385,13 @@ impl App {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| dir.display().to_string());
-                self.toast = Some((format!("Moved to {label}"), Instant::now(), true));
+                self.toast = Some((format!("{} {label}", tr("已移到", "Moved to")), Instant::now(), true));
                 self.settings.recent.retain(|p| *p != dir);
                 self.settings.recent.insert(0, dir);
                 self.settings.recent.truncate(8);
                 settings::save(&self.settings);
             }
-            Err(e) => self.toast = Some((format!("Move failed: {e}"), Instant::now(), false)),
+            Err(e) => self.toast = Some((format!("{}: {e}", tr("移动失败", "Move failed")), Instant::now(), false)),
         }
     }
 
@@ -348,7 +403,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let start = self.settings.recent.first().cloned().or_else(home_dir);
         let title = match kind {
-            Pick::AddSource => "Add a photo folder",
+            Pick::AddSource => tr("添加卡片文件夹", "Add a card folder"),
         };
         self.pick = Some((kind, rx));
         let ctx = ctx.clone();
@@ -378,41 +433,54 @@ impl App {
             return;
         }
         let builder = egui::ViewportBuilder::default()
-            .with_title("GlanceCards settings")
-            .with_inner_size([540.0, 380.0])
-            .with_min_inner_size([380.0, 260.0]);
+            .with_title(tr("词卡 设置", "GlanceCards settings"))
+            .with_inner_size([560.0, 500.0])
+            .with_min_inner_size([400.0, 380.0]);
         let dirs = self.dirs.clone();
         let mut secs = self.interval.as_secs();
         let mut fit = self.fit;
+        let mut level = self.level;
+        let wayland = is_wayland();
         let (mut close, mut add, mut remove) = (false, false, None::<usize>);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("glancecards-settings"), builder, |ctx, _| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Photo folders");
-                ui.label("Photos are picked at random from these folders and everything inside them.");
+                ui.heading(tr("卡片文件夹", "Card folders"));
+                ui.label(tr("从这些文件夹（包括里面的子文件夹）里随机抽取卡片。", "Cards are picked at random from these folders and everything inside them."));
                 ui.add_space(6.0);
                 for (i, d) in dirs.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        if ui.add_enabled(dirs.len() > 1, egui::Button::new("Remove")).clicked() {
+                        if ui.add_enabled(dirs.len() > 1, egui::Button::new(tr("移除", "Remove"))).clicked() {
                             remove = Some(i);
                         }
                         ui.label(d.display().to_string());
                     });
                 }
                 ui.add_space(4.0);
-                if ui.button("Add folder...").clicked() {
+                if ui.button(tr("添加文件夹…", "Add folder...")).clicked() {
                     add = true;
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label("Change photo every");
-                    ui.add(egui::DragValue::new(&mut secs).range(1..=3600).suffix(" s"));
+                    ui.label(tr("每隔", "Change card every"));
+                    ui.add(egui::DragValue::new(&mut secs).range(1..=3600).suffix(tr(" 秒", " s")));
+                    ui.label(tr("换一张卡片", ""));
                 });
-                ui.checkbox(&mut fit, "Fit the window to each card's shape");
+                ui.checkbox(&mut fit, tr("窗口贴合每张卡片的形状", "Fit the window to each card's shape"));
+                ui.separator();
+                ui.heading(tr("窗口位置", "Window position"));
+                ui.radio_value(&mut level, Level::Top, tr("悬浮在其他窗口之上", "Float above other windows"));
+                ui.radio_value(&mut level, Level::Normal, tr("普通窗口", "Ordinary window"));
+                ui.add_enabled_ui(!wayland, |ui| {
+                    ui.radio_value(&mut level, Level::Bottom, tr("沉在其他窗口之下（像桌面小部件）", "Below other windows (like a desktop widget)"));
+                });
+                if wayland {
+                    ui.weak(tr("当前是 Wayland 桌面，不能沉在其他窗口之下。", "On Wayland the window cannot be put below other windows."));
+                }
                 ui.separator();
                 if let Some(p) = settings::file_path() {
-                    ui.weak(format!("Saved in {}", p.display()));
+                    ui.weak(format!("{} {}", tr("设置保存在", "Saved in"), p.display()));
                 }
-                if ui.button("Close").clicked() {
+                if ui.button(tr("关闭", "Close")).clicked() {
                     close = true;
                 }
             });
@@ -438,6 +506,12 @@ impl App {
             self.fit = fit;
             self.settings.fit = fit;
             settings::save(&self.settings);
+        }
+        if level != self.level {
+            self.level = level;
+            self.settings.level = level;
+            settings::save(&self.settings);
+            ctx.send_viewport_cmd(ViewportCommand::WindowLevel(window_level(level)));
         }
         if close {
             self.settings_open = false;
@@ -493,8 +567,8 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         // Some X11 window managers drop the level requested at creation, so ask again once mapped.
         self.frames += 1;
-        if self.sink && self.frames == 3 {
-            ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnBottom));
+        if self.level != Level::Normal && self.frames == 3 {
+            ctx.send_viewport_cmd(ViewportCommand::WindowLevel(window_level(self.level)));
         }
         self.poll(&ctx);
         if let Some(a) = self.fit_aspect.take() {
@@ -556,11 +630,11 @@ impl eframe::App for App {
             }
             None => {
                 let msg = if !self.scanned {
-                    "Scanning photos..."
+                    tr("正在扫描卡片…", "Scanning cards...")
                 } else if self.queue.is_empty() {
-                    "No photos found"
+                    tr("没有找到卡片", "No cards found")
                 } else {
-                    "Loading..."
+                    tr("加载中…", "Loading...")
                 };
                 painter.text(
                     photo_area.center(),
@@ -588,28 +662,28 @@ impl eframe::App for App {
             self.step(true);
         }
         bg.context_menu(|ui| {
-            if ui.button("Next photo").clicked() {
+            if ui.button(tr("下一张", "Next card")).clicked() {
                 self.step(true);
                 ui.close();
             }
-            if ui.button("Previous photo").clicked() {
+            if ui.button(tr("上一张", "Previous card")).clicked() {
                 self.go_back();
                 ui.close();
             }
-            if ui.checkbox(&mut self.fit, "Fit window to card").changed() && self.fit {
+            if ui.checkbox(&mut self.fit, tr("窗口贴合卡片", "Fit window to card")).changed() && self.fit {
                 self.fit_aspect = self.shown.as_ref().map(|(_, t)| t.aspect_ratio());
             }
-            let label = if self.paused { "Resume slideshow" } else { "Pause slideshow" };
+            let label = if self.paused { tr("继续轮播", "Resume slideshow") } else { tr("暂停轮播", "Pause slideshow") };
             if ui.button(label).clicked() {
                 self.paused = !self.paused;
                 ui.close();
             }
             ui.separator();
-            if ui.button("Settings...").clicked() {
+            if ui.button(tr("设置…", "Settings...")).clicked() {
                 self.settings_open = true;
                 ui.close();
             }
-            if ui.button("Quit").clicked() {
+            if ui.button(tr("退出", "Quit")).clicked() {
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
         });
@@ -651,7 +725,7 @@ impl eframe::App for App {
                 Color32::from_rgba_unmultiplied(40, 130, 65, 215)
             };
             painter.rect_filled(btn, 6.0, fill);
-            painter.text(btn.center(), Align2::CENTER_CENTER, "Got it", FontId::proportional(14.0), Color32::WHITE);
+            painter.text(btn.center(), Align2::CENTER_CENTER, tr("认识了", "Got it"), FontId::proportional(14.0), Color32::WHITE);
             if resp.hovered() {
                 ctx.set_cursor_icon(CursorIcon::PointingHand);
             }
@@ -681,7 +755,7 @@ impl eframe::App for App {
                     let resp = ui.interact(ub, Id::new("undo"), Sense::click());
                     let fill = if resp.hovered() { Color32::from_gray(90) } else { Color32::from_gray(60) };
                     painter.rect_filled(ub, 5.0, fill);
-                    painter.text(ub.center(), Align2::CENTER_CENTER, "Undo", FontId::proportional(13.0), Color32::WHITE);
+                    painter.text(ub.center(), Align2::CENTER_CENTER, tr("撤销", "Undo"), FontId::proportional(13.0), Color32::WHITE);
                     if resp.clicked() {
                         self.undo();
                     }
@@ -723,7 +797,7 @@ fn is_wayland() -> bool {
 fn parse_args(st: &Settings) -> Config {
     let mut dirs = Vec::new();
     let mut interval = st.interval;
-    let mut normal_level = false;
+    let mut level = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -732,10 +806,12 @@ fn parse_args(st: &Settings) -> Config {
                     interval = v;
                 }
             }
-            "--normal" => normal_level = true,
+            "--normal" => level = Some(Level::Normal),
+            "--top" => level = Some(Level::Top),
+            "--bottom" => level = Some(Level::Bottom),
             "--help" | "-h" => {
                 println!(
-                    "glancecards [--interval SECONDS] [--normal] [FOLDER...]\n\nDefault folder: ~/word-images/learning, default interval: 10s.\n--normal keeps the window at normal stacking level instead of below other windows (always the case on Wayland)."
+                    "glancecards (词卡) [--interval SECONDS] [--top | --normal | --bottom] [FOLDER...]\n\nDefault folder: ~/word-images/learning, default interval: 10s.\n--top floats above other windows, --normal is an ordinary window, --bottom sits below all windows like a desktop widget (X11 only; the default). These override the setting in the settings window."
                 );
                 std::process::exit(0);
             }
@@ -748,17 +824,20 @@ fn parse_args(st: &Settings) -> Config {
     if dirs.is_empty() {
         dirs.push(home_dir().map(|h| h.join("word-images").join("learning")).unwrap_or_else(|| PathBuf::from(".")));
     }
-    let normal_level = normal_level || is_wayland();
-    Config { dirs, interval: Duration::from_secs(interval.max(1)), normal_level, settings: st.clone() }
+    let mut level = level.unwrap_or(st.level);
+    if level == Level::Bottom && is_wayland() {
+        level = Level::Normal; // Wayland has no "below all windows"
+    }
+    Config { dirs, interval: Duration::from_secs(interval.max(1)), level, settings: st.clone() }
 }
 
 fn main() -> eframe::Result {
     let st = settings::load();
     let cfg = parse_args(&st);
-    let level = if cfg.normal_level { egui::WindowLevel::Normal } else { egui::WindowLevel::AlwaysOnBottom };
+    let level = window_level(cfg.level);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("GlanceCards")
+            .with_title("词卡 GlanceCards")
             .with_app_id("glancecards")
             .with_inner_size([300.0, 420.0])
             .with_min_inner_size([200.0, 160.0])

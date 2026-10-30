@@ -3,6 +3,27 @@
 
 use std::path::PathBuf;
 
+/// Where the window sits relative to other windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    /// Below every other window, like a desktop widget (X11 only).
+    Bottom,
+    /// An ordinary window.
+    Normal,
+    /// Above other windows.
+    Top,
+}
+
+impl Level {
+    fn name(self) -> &'static str {
+        match self {
+            Level::Bottom => "bottom",
+            Level::Normal => "normal",
+            Level::Top => "top",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     /// Folders the photos are picked from.
@@ -13,11 +34,12 @@ pub struct Settings {
     pub known: Option<PathBuf>,
     pub interval: u64,
     pub fit: bool,
+    pub level: Level,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { dirs: Vec::new(), recent: Vec::new(), known: None, interval: 10, fit: true }
+        Self { dirs: Vec::new(), recent: Vec::new(), known: None, interval: 10, fit: true, level: Level::Bottom }
     }
 }
 
@@ -48,6 +70,13 @@ pub fn load() -> Settings {
                 }
             }
             "fit" => st.fit = value.trim() != "0",
+            "level" => {
+                st.level = match value.trim() {
+                    "normal" => Level::Normal,
+                    "top" => Level::Top,
+                    _ => Level::Bottom,
+                }
+            }
             _ => {}
         }
     }
@@ -66,7 +95,7 @@ pub fn save(st: &Settings) {
     if let Some(k) = &st.known {
         out.push_str(&format!("known={}\n", k.display()));
     }
-    out.push_str(&format!("interval={}\nfit={}\n", st.interval, u8::from(st.fit)));
+    out.push_str(&format!("interval={}\nfit={}\nlevel={}\n", st.interval, u8::from(st.fit), st.level.name()));
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
