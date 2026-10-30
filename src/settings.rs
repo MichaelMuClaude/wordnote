@@ -1,4 +1,4 @@
-//! Small persistent settings file (`~/.config/wordnote/settings.txt`, `%APPDATA%\wordnote\settings.txt` on Windows).
+//! Small persistent settings file (`~/.config/glancecards/settings.txt`, `%APPDATA%\glancecards\settings.txt` on Windows).
 //! Plain `key=value` lines; `dir` and `recent` may repeat.
 
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ pub fn file_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
         .or_else(|| home_dir().map(|h| h.join(".config")))?;
-    Some(base.join("wordnote").join("settings.txt"))
+    Some(base.join("glancecards").join("settings.txt"))
 }
 
 pub fn load() -> Settings {

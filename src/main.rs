@@ -1,4 +1,4 @@
-//! A small, resizable desktop sticky note for learning words: shows random word cards (pictures)
+//! A small, resizable desktop card window for learning words: shows random word cards (pictures)
 //! from a folder and lets you move the ones you already know to another folder with one click.
 
 mod loader;
@@ -18,10 +18,9 @@ use rand::seq::SliceRandom;
 use loader::Loaded;
 use settings::{Settings, home_dir};
 
-const PAPER: Color32 = Color32::from_rgb(255, 238, 140);
-const PAPER_STRIP: Color32 = Color32::from_rgb(247, 220, 100);
-const PAPER_EDGE: Color32 = Color32::from_rgb(214, 180, 60);
-const PAPER_CURL: Color32 = Color32::from_rgb(228, 196, 72);
+/// Background behind the card: the same cream as the strip under each picture, so a card that does not
+/// fill the window (no "fit to card") blends in instead of showing bars.
+const CARD_BG: Color32 = Color32::from_rgb(250, 247, 240);
 const EDGE: f32 = 7.0;
 const TOAST_SECS: u64 = 8;
 
@@ -32,7 +31,6 @@ enum Undo {
 
 /// What a folder-picker dialog was opened for.
 enum Pick {
-    MoveTo(PathBuf),
     AddSource,
 }
 
@@ -62,7 +60,6 @@ struct App {
     dirs: Vec<PathBuf>,
     settings: Settings,
     settings_open: bool,
-    move_menu: bool,
     /// Whether the pointer was over the photo last frame; the slideshow waits while it is.
     hover_photo: bool,
     pick: Option<(Pick, Receiver<Option<PathBuf>>)>,
@@ -96,7 +93,6 @@ impl App {
             toast: None,
             last_action: None,
             dirs: cfg.dirs,
-            move_menu: false,
             hover_photo: false,
             settings_open: false,
             pick: None,
@@ -172,7 +168,6 @@ impl App {
             if let Some((kind, _)) = self.pick.take() {
                 if let Some(dir) = res {
                     match kind {
-                        Pick::MoveTo(photo) => self.move_current_to(photo, dir),
                         Pick::AddSource => {
                             if !self.dirs.contains(&dir) {
                                 self.dirs.push(dir);
@@ -286,7 +281,7 @@ impl App {
     }
 
     fn busy(&self) -> bool {
-        self.move_menu || self.pick.is_some()
+        self.pick.is_some()
     }
 
     fn undo(&mut self) {
@@ -353,7 +348,6 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let start = self.settings.recent.first().cloned().or_else(home_dir);
         let title = match kind {
-            Pick::MoveTo(_) => "Move photo to...",
             Pick::AddSource => "Add a photo folder",
         };
         self.pick = Some((kind, rx));
@@ -379,87 +373,19 @@ impl App {
         self.rescan(ctx);
     }
 
-    fn draw_move_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, painter: &egui::Painter, mv: Rect, bounds: Rect) {
-        let Some((photo, _)) = self.shown.clone() else {
-            self.move_menu = false;
-            return;
-        };
-        let recents: Vec<PathBuf> = self.settings.recent.iter().filter(|p| p.is_dir()).take(4).cloned().collect();
-        let (row_h, head_h) = (28.0, 26.0);
-        let w = 230.0_f32.min(bounds.width() - 20.0);
-        let h = head_h + row_h * (recents.len() as f32 + 1.0) + 8.0;
-        let mut top = mv.bottom() + 4.0;
-        if top + h > bounds.bottom() - 4.0 {
-            top = (bounds.bottom() - 4.0 - h).max(bounds.top() + 4.0);
-        }
-        let menu = Rect::from_min_size(Pos2::new(mv.left(), top), vec2(w, h));
-        painter.rect_filled(menu, 8.0, Color32::from_black_alpha(230));
-        painter.text(
-            menu.min + vec2(12.0, head_h / 2.0 + 2.0),
-            Align2::LEFT_CENTER,
-            "Move to:",
-            FontId::proportional(12.0),
-            Color32::from_gray(170),
-        );
-        let mut chosen: Option<PathBuf> = None;
-        let mut browse = false;
-        let mut y = menu.top() + head_h + 2.0;
-        let row = |ui: &mut egui::Ui, id: Id, label: String, y: f32| -> bool {
-            let r = Rect::from_min_size(Pos2::new(menu.left() + 4.0, y), vec2(w - 8.0, row_h));
-            let resp = ui.interact(r, id, Sense::click());
-            if resp.hovered() {
-                painter.rect_filled(r, 5.0, Color32::from_white_alpha(40));
-                ctx.set_cursor_icon(CursorIcon::PointingHand);
-            }
-            painter.with_clip_rect(r.shrink2(vec2(4.0, 0.0))).text(
-                r.left_center() + vec2(8.0, 0.0),
-                Align2::LEFT_CENTER,
-                label,
-                FontId::proportional(14.0),
-                Color32::WHITE,
-            );
-            resp.clicked()
-        };
-        for (i, dir) in recents.iter().enumerate() {
-            let name = dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| dir.display().to_string());
-            if row(ui, Id::new(("move-row", i)), name, y) {
-                chosen = Some(dir.clone());
-            }
-            y += row_h;
-        }
-        if row(ui, Id::new("move-browse"), "Choose folder...".into(), y) {
-            browse = true;
-        }
-        let clicked_outside = ctx.input(|i| {
-            i.pointer.primary_clicked() && i.pointer.interact_pos().is_some_and(|p| !menu.contains(p) && !mv.contains(p))
-        });
-        if let Some(dir) = chosen {
-            self.move_menu = false;
-            self.move_current_to(photo, dir);
-        } else if browse {
-            self.move_menu = false;
-            self.start_pick(ctx, Pick::MoveTo(photo));
-        } else if clicked_outside {
-            self.move_menu = false;
-        }
-    }
-
     fn settings_viewport(&mut self, ctx: &egui::Context) {
         if !self.settings_open {
             return;
         }
         let builder = egui::ViewportBuilder::default()
-            .with_title("Frame settings")
+            .with_title("GlanceCards settings")
             .with_inner_size([540.0, 380.0])
             .with_min_inner_size([380.0, 260.0]);
         let dirs = self.dirs.clone();
         let mut secs = self.interval.as_secs();
         let mut fit = self.fit;
         let (mut close, mut add, mut remove) = (false, false, None::<usize>);
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("wordnote-settings"), builder, |ctx, _| {
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("glancecards-settings"), builder, |ctx, _| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("Photo folders");
                 ui.label("Photos are picked at random from these folders and everything inside them.");
@@ -481,7 +407,7 @@ impl App {
                     ui.label("Change photo every");
                     ui.add(egui::DragValue::new(&mut secs).range(1..=3600).suffix(" s"));
                 });
-                ui.checkbox(&mut fit, "Fit the note to each card's shape");
+                ui.checkbox(&mut fit, "Fit the window to each card's shape");
                 ui.separator();
                 if let Some(p) = settings::file_path() {
                     ui.weak(format!("Saved in {}", p.display()));
@@ -519,39 +445,15 @@ impl App {
     }
 }
 
-/// Paper margin around the card, scaled with the window.
-fn note_margin(rect: Rect) -> f32 {
-    (rect.width().min(rect.height()) * 0.045).clamp(8.0, 22.0)
-}
-
-/// Paints a yellow sticky note: a slightly darker adhesive strip along the top and a curled
-/// bottom-right corner. Returns the area left for the card.
+/// Fills the window with the card background; the card gets the whole window (no frame, no margin).
 fn paint_note(p: &egui::Painter, rect: Rect) -> Rect {
-    let m = note_margin(rect);
-    p.rect_filled(rect, 0.0, PAPER);
-    p.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, PAPER_EDGE), egui::StrokeKind::Inside);
-    // Adhesive strip.
-    p.rect_filled(Rect::from_min_max(rect.min + vec2(1.0, 1.0), Pos2::new(rect.right() - 1.0, rect.top() + m * 0.8)), 0.0, PAPER_STRIP);
-    // Curled corner.
-    let c = (m * 1.6).min(rect.width().min(rect.height()) * 0.2);
-    let br = rect.right_bottom();
-    p.add(egui::Shape::convex_polygon(
-        vec![br - vec2(c, 0.0), br - vec2(0.0, c), br - vec2(c * 0.25, c * 0.25)],
-        PAPER_CURL,
-        egui::Stroke::new(1.0, PAPER_EDGE),
-    ));
-    let top = m * 0.8 + m * 0.5;
-    Rect::from_min_max(
-        Pos2::new(rect.left() + m, rect.top() + top),
-        Pos2::new(rect.right() - m, rect.bottom() - m),
-    )
+    p.rect_filled(rect, 0.0, CARD_BG);
+    rect
 }
 
-/// Space taken by the paper margin on both sides of the card, for a window of this size.
-fn note_pad(size: egui::Vec2) -> f32 {
-    let m = note_margin(Rect::from_min_size(Pos2::ZERO, size));
-    // Horizontal margins are `m` each; the top strip makes the vertical pad larger, so use the larger of the two.
-    2.0 * m + m * 0.65
+/// Space taken around the card, for a window of this size: none.
+fn note_pad(_size: egui::Vec2) -> f32 {
+    0.0
 }
 
 fn resize_zone(rect: Rect, p: Pos2) -> Option<ResizeDirection> {
@@ -623,9 +525,6 @@ impl eframe::App for App {
         if pause {
             self.paused = !self.paused;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.move_menu = false;
-        }
 
         // Auto-advance once the current photo has been on screen long enough.
         let showing_current = self.current_path().zip(self.shown.as_ref()).is_some_and(|(c, (s, _))| c == s);
@@ -653,12 +552,6 @@ impl eframe::App for App {
                     img_rect,
                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     Color32::WHITE,
-                );
-                painter.rect_stroke(
-                    img_rect,
-                    0.0,
-                    egui::Stroke::new(1.0, Color32::from_black_alpha(110)),
-                    egui::StrokeKind::Outside,
                 );
             }
             None => {
@@ -703,7 +596,7 @@ impl eframe::App for App {
                 self.go_back();
                 ui.close();
             }
-            if ui.checkbox(&mut self.fit, "Fit note to card").changed() && self.fit {
+            if ui.checkbox(&mut self.fit, "Fit window to card").changed() && self.fit {
                 self.fit_aspect = self.shown.as_ref().map(|(_, t)| t.aspect_ratio());
             }
             let label = if self.paused { "Resume slideshow" } else { "Pause slideshow" };
@@ -725,7 +618,7 @@ impl eframe::App for App {
         let overlay = shown_rect.unwrap_or(photo_area);
         let hovering = shown_rect.zip(pointer).is_some_and(|(r, p)| r.contains(p));
         self.hover_photo = hovering;
-        if (hovering || self.move_menu) && self.shown.is_some() {
+        if hovering && self.shown.is_some() {
             if let Some((path, _)) = &self.shown {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 let galley = painter.layout_no_wrap(name, FontId::proportional(12.0), Color32::WHITE);
@@ -764,25 +657,6 @@ impl eframe::App for App {
             }
             if resp.clicked() {
                 self.mark_known();
-            }
-            // "Move" button (top-left): pick a folder to move this photo to.
-            let mv = Rect::from_min_size(overlay.left_top() + vec2(8.0, 8.0), vec2(64.0, 28.0));
-            let mv_resp = ui.interact(mv, Id::new("move"), Sense::click());
-            let mv_fill = if mv_resp.hovered() || self.move_menu {
-                Color32::from_rgb(70, 110, 170)
-            } else {
-                Color32::from_rgba_unmultiplied(55, 85, 135, 215)
-            };
-            painter.rect_filled(mv, 6.0, mv_fill);
-            painter.text(mv.center(), Align2::CENTER_CENTER, "Move", FontId::proportional(14.0), Color32::WHITE);
-            if mv_resp.hovered() {
-                ctx.set_cursor_icon(CursorIcon::PointingHand);
-            }
-            if mv_resp.clicked() {
-                self.move_menu = !self.move_menu;
-            }
-            if self.move_menu {
-                self.draw_move_menu(ui, &ctx, &painter, mv, rect);
             }
         }
 
@@ -861,7 +735,7 @@ fn parse_args(st: &Settings) -> Config {
             "--normal" => normal_level = true,
             "--help" | "-h" => {
                 println!(
-                    "wordnote [--interval SECONDS] [--normal] [FOLDER...]\n\nDefault folder: ~/word-images/learning, default interval: 10s.\n--normal keeps the window at normal stacking level instead of below other windows (always the case on Wayland)."
+                    "glancecards [--interval SECONDS] [--normal] [FOLDER...]\n\nDefault folder: ~/word-images/learning, default interval: 10s.\n--normal keeps the window at normal stacking level instead of below other windows (always the case on Wayland)."
                 );
                 std::process::exit(0);
             }
@@ -884,8 +758,8 @@ fn main() -> eframe::Result {
     let level = if cfg.normal_level { egui::WindowLevel::Normal } else { egui::WindowLevel::AlwaysOnBottom };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("WordNote")
-            .with_app_id("wordnote")
+            .with_title("GlanceCards")
+            .with_app_id("glancecards")
             .with_inner_size([300.0, 420.0])
             .with_min_inner_size([200.0, 160.0])
             .with_decorations(false)
@@ -895,7 +769,7 @@ fn main() -> eframe::Result {
     };
     let mut cfg = Some(cfg);
     eframe::run_native(
-        "wordnote",
+        "glancecards",
         options,
         Box::new(move |cc| Ok(Box::new(App::new(&cc.egui_ctx, cfg.take().expect("single init"))))),
     )

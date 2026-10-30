@@ -1,8 +1,8 @@
 [package]
-name = "wordnote"
+name = "glancecards"
 version = "0.1.0"
 edition = "2024"
-description = "A desktop sticky note that shows random word cards and lets you move the ones you already know to another folder"
+description = "A small desktop window that shows random word picture cards, so you can glance at them while you work, and lets you move the ones you already know to a folder"
 license = "MIT"
 readme = "README.md"
 
